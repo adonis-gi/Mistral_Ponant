@@ -1,10 +1,10 @@
 Opération Mistral, vérification J1
 Guilde : ponant
-Date : 2026-11-02 15:33:56
+Date : 2026-11-02 15:49:49
 
-KO   0/2  les 3 scripts existent dans outils/ et sont exécutables  (top-attaquants.sh, menage-logs.sh)
+..   1/2  les 3 scripts existent dans outils/ et sont exécutables  (menage-logs.sh)
 OK   1/1  shellcheck sans avertissement : sauvegarde.sh
-KO   0/1  shellcheck sans avertissement : top-attaquants.sh  (absent)
+OK   1/1  shellcheck sans avertissement : top-attaquants.sh
 KO   0/1  shellcheck sans avertissement : menage-logs.sh  (absent)
 OK   1/1  sauvegarde.sh sans argument : usage sur stderr et code non nul
 OK   1/1  sauvegarde.sh sur un dossier absent : code non nul
@@ -18,5 +18,5 @@ KO   0/1  menage-logs.sh -n : affiche sans rien toucher
 KO   0/1  menage-logs.sh : compresse seulement les .log de 2 jours ou plus  (4 attendus)
 KO   0/1  menage-logs.sh relancé : rien ne change, code 0
 
-NOTE : 8/20   XP gagnée : 80
-Sceau : 48310618ea4d
+NOTE : 10/20   XP gagnée : 100
+Sceau : 284bb304a508
