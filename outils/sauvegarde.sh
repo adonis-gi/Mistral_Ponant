@@ -11,6 +11,24 @@ log() {
     echo "[$(date +%Y-%m-%dT%H:%M:%S)] $1" | tee -a /var/log/mistral/sauvegarde.log
 }
 
+
+if getopts ":h" pot; then
+    echo "Usage : $0 [-k N] SOURCE [DESTINATION]
+Options :
+  -k N          Nombre de sauvegardes à conserver (7 par défaut)
+  -h            Afficher cette aide
+
+Arguments :
+  SOURCE        Dossier à sauvegarder
+  DESTINATION   Dossier où stocker les archives (par défaut /srv/sauvegardes)
+
+Exemple :
+  $0 -k 3 /srv/mistral/partage /tmp/essai"
+    exit
+fi
+
+
+
 GARDER=7
 
 while getopts ":k:h" opt; do
@@ -61,7 +79,8 @@ trap nettoyer EXIT
 # uniquement lorsque la compression est terminée
 tar -czvf "$TEMP" -C "$PARENT" "$NAME"
 mv -- "$TEMP" "$DEST/$FILE"
-
+#creation de l'empreint sha256
+sha256sum "$DEST/$FILE" > "$DEST/$FILE.sha256"
 log "Archive créée : $DEST/$FILE"
 
 # Tant que le nombre d'archives dépasse GARDER,
