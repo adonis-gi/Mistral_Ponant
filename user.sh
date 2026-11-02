@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# 0. Installation de sudo si absent
+apt update && apt install -y sudo
+
 # 1. Vérification des privilèges root
 if [ "$EUID" -ne 0 ]; then
     echo "Erreur : Ce script doit être exécuté en tant que root (ou avec sudo)."
