@@ -1,6 +1,6 @@
 Opération Mistral, vérification J1
 Guilde : ponant
-Date : 2026-11-02 16:37:15
+Date : 2026-11-03 09:56:42
 
 OK   2/2  les 3 scripts existent dans outils/ et sont exécutables
 OK   1/1  shellcheck sans avertissement : sauvegarde.sh
@@ -12,11 +12,11 @@ OK   1/1  archive nommée partage-test-AAAAMMJJ-HHMMSS.tar.gz
 OK   2/2  l'archive contient tout le dossier, noms avec espaces compris
 OK   1/1  rotation : 7 archives gardées, les plus anciennes supprimées
 OK   1/1  journal /var/log/mistral/sauvegarde.log horodaté [AAAA-MM-JJTHH:MM:SS]
-KO   0/3  top-attaquants.sh : les 5 premières adresses, au bon format  (attendu ['397 203.0.113.227'] ...)
-KO   0/2  top-attaquants.sh -n 3
+OK   3/3  top-attaquants.sh : les 5 premières adresses, au bon format
+OK   2/2  top-attaquants.sh -n 3
 OK   1/1  menage-logs.sh -n : affiche sans rien toucher
 OK   1/1  menage-logs.sh : compresse seulement les .log de 2 jours ou plus
 OK   1/1  menage-logs.sh relancé : rien ne change, code 0
 
-NOTE : 15/20   XP gagnée : 150
-Sceau : d028f60d4348
+NOTE : 20/20   XP gagnée : 200
+Sceau : 59820dbb0800
