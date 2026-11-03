@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
-"""Crée les comptes des saisonniers à partir de l'export RH (comptes.csv et rejets.csv)."""
+
+"""Crée les comptes des saisonniers à partir de l'export RH (comptes.csv, rejets.csv et mdp.csv)."""
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-# NOTES : ce script répond aux quêtes annexes : M1, M4, M5, M9 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+
 import argparse
 import csv
+import io
+import logging
 import os
 import re
+import secrets
+import string
 import sys
 import unicodedata
 from datetime import datetime
@@ -43,6 +51,20 @@ def generer_login(prenom, nom, logins_pris):
     return login
 
 
+def generer_mot_de_passe(longueur=14):
+    """Génère un mot de passe sécurisé de 14 caractères avec le module secrets."""
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*()_+-="
+    return "".join(secrets.choice(alphabet) for _ in range(longueur))
+
+
+def auto_detecter_delimiteur(f_in):
+    """Détecte automatiquement si le flux CSV utilise ';' ou ','."""
+    pos = f_in.tell()
+    premiere_ligne = f_in.readline()
+    f_in.seek(pos)
+    return ";" if ";" in premiere_ligne else ","
+
+
 def traiter_ligne(row, num_ligne, logins_pris, personnes_acceptees, domaine):
     """
     Traite une ligne du CSV selon l'ordre strict des contrôles :
@@ -67,18 +89,17 @@ def traiter_ligne(row, num_ligne, logins_pris, personnes_acceptees, domaine):
     if not prenom_rh:
         return None, [num_ligne, "prenom manquant"]
 
-    # 3. Date absente ou impossible (strptime lève ValueError, par exemple pour le 31/02)
+    # 3. Date absente ou impossible
     try:
         date_iso = normaliser_date(date_raw)
     except ValueError:
         return None, [num_ligne, "date invalide"]
 
-    # 4. Doublon : même nom, même prénom et même e-mail, sans tenir compte des majuscules
+    # 4. Doublon
     cle_personne = (nom_rh.lower(), prenom_rh.lower(), email_perso)
     if cle_personne in personnes_acceptees:
         return None, [num_ligne, "doublon"]
 
-    # Ligne acceptée
     personnes_acceptees.add(cle_personne)
     login = generer_login(prenom_rh, nom_rh, logins_pris)
     compte = [login, f"{login}@{domaine}", nom_rh, prenom_rh, site, date_iso]
@@ -87,10 +108,15 @@ def traiter_ligne(row, num_ligne, logins_pris, personnes_acceptees, domaine):
 
 def main():
     parser = CustomArgumentParser(description=__doc__)
-    parser.add_argument("--csv", required=True, help="fichier CSV de la RH (obligatoire)")
-    parser.add_argument("--sortie", required=True, help="dossier où écrire comptes.csv et rejets.csv (obligatoire)")
+    parser.add_argument("--csv", required=True, help="fichier CSV de la RH ou '-' pour l'entrée standard (obligatoire)")
+    parser.add_argument("--sortie", required=True, help="dossier où écrire les fichiers CSV (obligatoire)")
     parser.add_argument("--domaine", default="mistral.test", help="domaine des e-mails (défaut : mistral.test)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="affiche le détail du traitement (niveau INFO)")
+    parser.add_argument("--mdp", action="store_true", help="génère mdp.csv avec des mots de passe provisoires (droits 600)")
     args = parser.parse_args()
+
+    log_level = logging.INFO if args.verbose else logging.WARNING
+    logging.basicConfig(level=log_level, format="%(levelname)s: %(message)s")
 
     logins_pris = set()
     personnes_acceptees = set()
@@ -98,25 +124,37 @@ def main():
     rejets = []
 
     try:
-        # utf-8-sig retire le BOM ajouté par le tableur
-        with open(args.csv, mode="r", encoding="utf-8-sig", newline="") as f_in:
-            reader = csv.DictReader(f_in, delimiter=";")
-            for num_ligne, row in enumerate(reader, start=2):
-                compte, rejet = traiter_ligne(row, num_ligne, logins_pris, personnes_acceptees, args.domaine)
-                if compte:
-                    comptes_valides.append(compte)
-                else:
-                    rejets.append(rejet)
+        logging.info("Lecture de la source CSV : %s", "entrée standard" if args.csv == "-" else args.csv)
+        if args.csv == "-":
+            contenu = sys.stdin.buffer.read().decode("utf-8-sig")
+        else:
+            with open(args.csv, mode="r", encoding="utf-8-sig", newline="") as f:
+                contenu = f.read()
+
+        f_in = io.StringIO(contenu)
+        delimiteur = auto_detecter_delimiteur(f_in)
+        reader = csv.DictReader(f_in, delimiter=delimiteur)
+
+        for num_ligne, row in enumerate(reader, start=2):
+            compte, rejet = traiter_ligne(row, num_ligne, logins_pris, personnes_acceptees, args.domaine)
+            if compte:
+                comptes_valides.append(compte)
+                logging.info("Ligne %d : compte créé pour %s (%s)", num_ligne, compte[0], compte[1])
+            else:
+                rejets.append(rejet)
+                logging.warning("Ligne %d rejetée : %s", num_ligne, rejet[1])
+
     except FileNotFoundError:
         print(f"Erreur : le fichier '{args.csv}' est introuvable.", file=sys.stderr)
         return 2
 
-    # Tri par ordre alphabétique du login (première colonne)
     comptes_valides.sort(key=lambda compte: compte[0])
 
     os.makedirs(args.sortie, exist_ok=True)
     fichier_comptes = os.path.join(args.sortie, "comptes.csv")
     fichier_rejets = os.path.join(args.sortie, "rejets.csv")
+
+    logging.info("Écriture des fichiers dans le dossier '%s'...", args.sortie)
 
     with open(fichier_comptes, mode="w", encoding="utf-8", newline="") as f_out:
         writer = csv.writer(f_out, delimiter=";")
@@ -128,10 +166,24 @@ def main():
         writer.writerow(["ligne", "raison"])
         writer.writerows(rejets)
 
+    if args.mdp:
+        fichier_mdp = os.path.join(args.sortie, "mdp.csv")
+        mots_de_passe = [
+            [compte[0], generer_mot_de_passe(14)]
+            for compte in comptes_valides
+        ]
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        fd = os.open(fichier_mdp, flags, 0o600)
+        with open(fd, mode="w", encoding="utf-8", newline="") as f_mdp:
+            writer = csv.writer(f_mdp, delimiter=";")
+            writer.writerow(["login", "mdp"])
+            writer.writerows(mots_de_passe)
+        os.chmod(fichier_mdp, 0o600)
+        logging.info("Mots de passe provisoires générés dans '%s' (droits 600)", fichier_mdp)
+
     print(f"{len(comptes_valides)} comptes créés dans {fichier_comptes}, {len(rejets)} lignes rejetées dans {fichier_rejets}.")
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
-
