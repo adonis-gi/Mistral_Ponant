@@ -1,11 +1,10 @@
 """Résume un journal d'accès web : statuts, adresses en 404 et chemins sensibles."""
-import argparse
-import datetime
 import json
-import os
 import re
 import sys
 from collections import Counter
+
+from mistral_commun import ParseurArguments, classer, ecrire_rapport
 
 # Une ligne du journal ressemble à :
 # 10.42.3.17 - - [02/Nov/2026:08:15:02 +0100] "GET /suivi HTTP/1.1" 200 5120 "-" "Mozilla/5.0"
@@ -21,11 +20,6 @@ OUTILS_AUTO = ["curl", "python-requests"]
 
 # Les chemins que cherchent les robots en quête de secrets.
 SENSIBLES = ["/.env", "/.git/config", "/wp-login.php", "/wp-admin/", "/phpmyadmin/", "/backup.zip", "/admin/"]
-
-
-def classer(compteur):
-    """Transforme un Counter en liste [cle, nombre], du plus grand au plus petit, puis par ordre alphabétique."""
-    return [[cle, nombre] for cle, nombre in sorted(compteur.items(), key=lambda kv: (-kv[1], kv[0]))]
 
 
 def analyser(chemin_fichier, top):
@@ -97,20 +91,8 @@ def texte(res):
     return "\n".join(lignes)
 
 
-def ecrire_rapport(contenu, extension):
-    """Enregistre le contenu dans rapports/ (à côté de outils/) et renvoie le chemin du fichier."""
-    racine = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    dossier = os.path.join(racine, "rapports")
-    os.makedirs(dossier, exist_ok=True)
-    horodatage = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    chemin = os.path.join(dossier, f"analyse-web-{horodatage}.{extension}")
-    with open(chemin, "w", encoding="utf-8") as f:
-        f.write(contenu + "\n")
-    return chemin
-
-
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = ParseurArguments(description=__doc__)
     parser.add_argument("fichier", help="journal d'accès à analyser")
     parser.add_argument("--top", type=int, default=10, help="nombre d'adresses en 404 à afficher (10 par défaut)")
     parser.add_argument("--format", choices=["texte", "json"], default="texte", help="format de sortie (texte par défaut)")
@@ -136,7 +118,7 @@ def main():
     print(contenu)  # affichage à l'écran, inchangé
 
     try:
-        rapport = ecrire_rapport(contenu, extension)
+        rapport = ecrire_rapport("analyse-web", contenu, extension)
         print(f"Rapport enregistré dans {rapport}", file=sys.stderr)
     except OSError as e:
         print(f"Attention : rapport non enregistré ({e.strerror})", file=sys.stderr)
