@@ -24,7 +24,11 @@ EOF
 # 1. Valeurs par défaut
 N=5
 FILE="/var/log/mistral/auth.log"
-RES="top-attaquants-$(date +%Y-%m-%d-%H-%M).txt"
+
+# Met les rendus du scripts dans ../rapports, pour une meilleure organisation.
+RAPPORTS="$(cd "$(dirname "$0")/.." && pwd)/rapports"
+mkdir -p "$RAPPORTS"
+RES="$RAPPORTS/top-attaquants-$(date +%Y-%m-%d-%H-%M-%S).txt"
 
 # 2. Gestion des options avec getopts
 while getopts ":hn:" opt; do
