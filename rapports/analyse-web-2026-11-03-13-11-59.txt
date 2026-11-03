@@ -1,0 +1,22 @@
+Lignes analysées : 2500
+
+Statuts HTTP :
+  200 : 1768
+  304 : 152
+  403 : 32
+  404 : 508
+  500 : 40
+
+Top 3 des adresses en 404 :
+     54  203.0.113.184
+     52  203.0.113.87
+     47  198.51.100.65
+
+Chemins sensibles demandés :
+     41  /.git/config
+     37  /phpmyadmin/
+     36  /backup.zip
+     35  /.env
+     34  /wp-login.php
+     32  /admin/
+     30  /wp-admin/

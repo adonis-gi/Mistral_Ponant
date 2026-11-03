@@ -1,0 +1,36 @@
+Lignes analysées : 2500
+
+Statuts HTTP :
+  200 : 1768
+  304 : 152
+  403 : 32
+  404 : 508
+  500 : 40
+
+Top 10 des adresses en 404 :
+     54  203.0.113.184
+     52  203.0.113.87
+     47  198.51.100.65
+     47  198.51.100.7
+     46  198.51.100.249
+     41  198.51.100.9
+     38  198.51.100.27
+     36  198.51.100.102
+     36  203.0.113.5
+      6  192.0.2.43
+
+Chemins sensibles demandés :
+     41  /.git/config
+     37  /phpmyadmin/
+     36  /backup.zip
+     35  /.env
+     34  /wp-login.php
+     32  /admin/
+     30  /wp-admin/
+
+Les 5 User-Agent les plus fréquents :
+    648  curl/8.5.0
+    628  Mozilla/5.0 (Windows NT 10.0; Win64; x64)
+    619  Mozilla/5.0 (X11; Linux x86_64)
+    605  python-requests/2.31
+Requêtes automatiques (curl, python-requests) : 1253 sur 2500, soit 50.1 %
