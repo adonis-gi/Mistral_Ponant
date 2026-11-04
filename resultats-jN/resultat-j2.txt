@@ -1,0 +1,16 @@
+Opération Mistral, vérification J2
+Guilde : ponant
+Date : 2026-11-04 16:49:21
+
+OK   1/1  .gitignore exclut .venv
+OK   1/1  requirements.txt présent à la racine du dépôt
+OK   6/6  comptes.csv : logins, emails, dates ISO, tri par login
+OK   3/3  rejets.csv : numéro de ligne et raison
+OK   1/1  comptes.py sur un fichier absent : code 2
+OK   3/3  analyse_web.py : nombre de lignes et statuts
+OK   2/2  analyse_web.py --top 3 : adresses avec le plus de 404
+OK   2/2  analyse_web.py : chemins sensibles
+OK   1/1  analyse_web.py en sortie texte par défaut
+
+NOTE : 20/20   XP gagnée : 200
+Sceau : e84cb587eb50
