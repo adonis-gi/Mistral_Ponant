@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import requests
 
 API_BASE_URL = "http://vigie.mistral.test:8080/api/v1/tickets"
@@ -28,7 +29,6 @@ def charger_jeton(chemin_env: str = ENV_FILE_PATH) -> str:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#"):
-                    # Extrait la valeur si le fichier est sous la forme CLE=VALEUR ou valeur brute
                     if "=" in line:
                         _, val = line.split("=", 1)
                         return val.strip("'\"")
@@ -51,14 +51,16 @@ def gerer_erreur_http(e: requests.exceptions.HTTPError, ip: str) -> None:
         print(f"[ERREUR 403] Accès interdit pour l'IP {ip} : Droits insuffisants.", file=sys.stderr)
     elif status_code == 404:
         print(f"[ERREUR 404] Ressource API introuvable pour l'IP {ip}.", file=sys.stderr)
+    elif status_code == 429:
+        print(f"[ERREUR 429] Trop de requêtes envoyées à l'API pour l'IP {ip}.", file=sys.stderr)
     elif status_code == 503:
         print(f"[ERREUR 503] Service indisponible pour l'IP {ip} : L'API Vigie est temporairement inaccessible.", file=sys.stderr)
     else:
         print(f"[ERREUR HTTP {status_code}] Échec pour l'IP {ip} : {e}", file=sys.stderr)
 
 
-def traiter_rapport(fichier_rapport: str, seuil: int, jeton: str) -> bool:
-    """Parcourt le rapport, vérifie l'idempotence et crée les tickets."""
+def traiter_rapport(fichier_rapport: str, seuil: int, jeton: str, simulation: bool = False) -> bool:
+    """Parcourt le rapport, vérifie l'idempotence, applique le rate-limiting et crée les tickets."""
     try:
         with open(fichier_rapport, "r", encoding="utf-8") as f:
             donnees = json.load(f)
@@ -76,6 +78,38 @@ def traiter_rapport(fichier_rapport: str, seuil: int, jeton: str) -> bool:
 
     ips_traitees = set()
     succes_global = True
+    compteur_requetes = 0
+
+    def envoyer_requete_avec_rate_limit(method: str, url: str, params=None, json_data=None):
+        nonlocal compteur_requetes
+
+        while True:
+            # Limite proactive : pause de 6 secondes après 5 requêtes envoyées
+            if compteur_requetes >= 5:
+                print("[RATE LIMIT] Seuil de 5 requêtes atteint. Pause de 6 secondes...", file=sys.stderr)
+                time.sleep(6)
+                compteur_requetes = 0
+
+            compteur_requetes += 1
+
+            response = requests.request(
+                method=method,
+                url=url,
+                headers=headers,
+                params=params,
+                json=json_data,
+                timeout=10
+            )
+
+            # Gestion réactive si l'API renvoie HTTP 429
+            if response.status_code == 429:
+                print("[ERREUR 429] Limite de débit atteinte (HTTP 429). Pause de 6 secondes avant réessai...", file=sys.stderr)
+                time.sleep(6)
+                compteur_requetes = 0
+                continue
+
+            response.raise_for_status()
+            return response
 
     for item in donnees:
         ip = item.get("ip")
@@ -92,8 +126,7 @@ def traiter_rapport(fichier_rapport: str, seuil: int, jeton: str) -> bool:
 
         try:
             # 1. Idempotence distante : GET /tickets?ip=ADRESSE
-            response_get = requests.get(API_BASE_URL, params={"ip": ip}, headers=headers, timeout=10)
-            response_get.raise_for_status()
+            response_get = envoyer_requete_avec_rate_limit("GET", API_BASE_URL, params={"ip": ip})
             tickets_existants = response_get.json()
 
             if tickets_existants:
@@ -101,16 +134,18 @@ def traiter_rapport(fichier_rapport: str, seuil: int, jeton: str) -> bool:
                 ips_traitees.add(ip)
                 continue
 
-            # 2. Création du ticket : POST /tickets
-            payload = {
-                "ip": ip,
-                "score": score,
-                "titre": f"Adresse malveillante {ip}"
-            }
+            # 2. Création réelle ou simulation
+            if simulation:
+                print(f"[SIMULATION] Ticket à créer pour l'IP {ip} (score: {score}). Aucune modification envoyée.")
+            else:
+                payload = {
+                    "ip": ip,
+                    "score": score,
+                    "titre": f"Adresse malveillante {ip}"
+                }
 
-            response_post = requests.post(API_BASE_URL, json=payload, headers=headers, timeout=10)
-            response_post.raise_for_status()
-            print(f"[CRÉÉ] Ticket créé pour l'IP {ip} (score: {score}).")
+                response_post = envoyer_requete_avec_rate_limit("POST", API_BASE_URL, json_data=payload)
+                print(f"[CRÉÉ] Ticket créé pour l'IP {ip} (score: {score}).")
 
             ips_traitees.add(ip)
 
@@ -133,7 +168,10 @@ def traiter_rapport(fichier_rapport: str, seuil: int, jeton: str) -> bool:
 def main() -> int:
     parser = CustomArgumentParser(
         description="Générateur de tickets Vigie à partir d'un rapport de sécurité JSON.",
-        epilog="Exemple d'utilisation :\n  python3 tickets.py --rapport rapport.json --seuil 80",
+        epilog="Exemples d'utilisation :\n"
+               "  python3 tickets.py --rapport rapport.json\n"
+               "  python3 tickets.py --rapport rapport.json --seuil 50\n"
+               "  python3 tickets.py --rapport rapport.json --simulation",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
@@ -144,8 +182,13 @@ def main() -> int:
     parser.add_argument(
         "-s", "--seuil",
         type=int,
-        default=80,
-        help="Seuil de score minimal pour déclencher la création d'un ticket (défaut : 80)"
+        default=50,
+        help="Seuil de score minimal pour déclencher la création d'un ticket (défaut : 50)"
+    )
+    parser.add_argument(
+        "--simulation",
+        action="store_true",
+        help="Mode simulation : affiche les tickets à créer sans effectuer d'appel POST"
     )
 
     if len(sys.argv) == 1:
@@ -158,9 +201,9 @@ def main() -> int:
     jeton = charger_jeton(ENV_FILE_PATH)
 
     # Traitement du fichier
-    succes = traiter_rapport(args.rapport, args.seuil, jeton)
+    succes = traiter_rapport(args.rapport, args.seuil, jeton, simulation=args.simulation)
 
-    # Renvoie 0 si tout s'est bien passé, 1 si une erreur est survenue
+    # Code de retour transmis à sys.exit()
     return 0 if succes else 1
 
 
