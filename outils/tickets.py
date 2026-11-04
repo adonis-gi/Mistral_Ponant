@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Ouvre un ticket Vigie pour chaque adresse dangereuse du rapport, une seule fois par adresse."""
 import argparse
 import json
 import os
@@ -6,7 +7,7 @@ import sys
 import time
 import requests
 
-API_BASE_URL = "http://vigie.mistral.test:8080/api/v1/tickets"
+API_BASE_URL = os.environ.get("VIGIE_URL", "http://vigie.mistral.test:8080/api/v1") + "/tickets"
 ENV_FILE_PATH = "/etc/mistral/vigie.env"
 
 
@@ -19,7 +20,10 @@ class CustomArgumentParser(argparse.ArgumentParser):
 
 
 def charger_jeton(chemin_env: str = ENV_FILE_PATH) -> str:
-    """Charge le jeton d'authentification depuis le fichier de configuration."""
+    """Charge le jeton : variable VIGIE_TOKEN d'abord, sinon le fichier de configuration."""
+    jeton_env = os.environ.get("VIGIE_TOKEN", "").strip()
+    if jeton_env:
+        return jeton_env
     if not os.path.exists(chemin_env):
         print(f"Erreur : Le fichier de configuration '{chemin_env}' est introuvable.", file=sys.stderr)
         sys.exit(1)
@@ -77,6 +81,8 @@ def traiter_rapport(fichier_rapport: str, seuil: int, jeton: str, simulation: bo
     }
 
     ips_traitees = set()
+    nb_crees = 0
+    nb_deja_ouverts = 0
     succes_global = True
     compteur_requetes = 0
 
@@ -127,10 +133,12 @@ def traiter_rapport(fichier_rapport: str, seuil: int, jeton: str, simulation: bo
         try:
             # 1. Idempotence distante : GET /tickets?ip=ADRESSE
             response_get = envoyer_requete_avec_rate_limit("GET", API_BASE_URL, params={"ip": ip})
-            tickets_existants = response_get.json()
+            # L'API répond {"tickets": [...]} : c'est la liste qu'il faut tester, pas le dictionnaire
+            tickets_existants = response_get.json().get("tickets", [])
 
             if tickets_existants:
                 print(f"[IGNORÉ] IP {ip} (score: {score}) : un ticket existe déjà sur l'API.")
+                nb_deja_ouverts += 1
                 ips_traitees.add(ip)
                 continue
 
@@ -146,6 +154,7 @@ def traiter_rapport(fichier_rapport: str, seuil: int, jeton: str, simulation: bo
 
                 response_post = envoyer_requete_avec_rate_limit("POST", API_BASE_URL, json_data=payload)
                 print(f"[CRÉÉ] Ticket créé pour l'IP {ip} (score: {score}).")
+                nb_crees += 1
 
             ips_traitees.add(ip)
 
@@ -162,6 +171,7 @@ def traiter_rapport(fichier_rapport: str, seuil: int, jeton: str, simulation: bo
             print(f"[ERREUR API] Erreur imprévue pour l'IP {ip} : {e}", file=sys.stderr)
             succes_global = False
 
+    print(f"Résumé : {nb_crees} tickets créés, {nb_deja_ouverts} tickets déjà ouverts (seuil {seuil}).")
     return succes_global
 
 
@@ -170,7 +180,7 @@ def main() -> int:
         description="Générateur de tickets Vigie à partir d'un rapport de sécurité JSON.",
         epilog="Exemples d'utilisation :\n"
                "  python3 tickets.py --rapport rapport.json\n"
-               "  python3 tickets.py --rapport rapport.json --seuil 50\n"
+               "  python3 tickets.py --rapport rapport.json --seuil 90\n"
                "  python3 tickets.py --rapport rapport.json --simulation",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -182,8 +192,8 @@ def main() -> int:
     parser.add_argument(
         "-s", "--seuil",
         type=int,
-        default=50,
-        help="Seuil de score minimal pour déclencher la création d'un ticket (défaut : 50)"
+        default=80,
+        help="Seuil de score minimal pour déclencher la création d'un ticket (défaut : 80)"
     )
     parser.add_argument(
         "--simulation",
