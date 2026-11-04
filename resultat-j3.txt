@@ -1,0 +1,16 @@
+Opération Mistral, vérification J3
+Guilde : ponant
+Date : 2026-11-04 13:00:06
+
+KO   0/2  enrichir.py se termine sans erreur malgré les 429 et 503  (code 2 python3: can't open file '/guilde/outils/enrichir.py': [Errno 2] No such file or directory)
+KO   0/3  rapport.json : adresses, scores et catégories, tri par score
+KO   0/2  rapport.csv : en-tête ip;score;categories et mêmes lignes
+KO   0/2  enrichir.log contient des INFO et des WARNING (reprises)
+KO   0/1  sans VIGIE_TOKEN : code 3  (code 2)
+OK   1/1  le jeton n'apparaît ni dans les fichiers ni dans l'historique Git
+KO   0/4  incidents.csv : toutes les pages, par site et gravité  (75 incidents attendus, code 2)
+KO   0/4  tickets.py lancé deux fois : un seul ticket par adresse dangereuse  (0/6)
+OK   1/1  aucun ticket sous le seuil
+
+NOTE : 2/20   XP gagnée : 20
+Sceau : c588b247aaf9

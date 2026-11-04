@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    echo "Usage : $0 {reputation IP | tickets | ticket-ip IP}" >&2
+    exit 2
+}
+
+if [[ $# -lt 1 ]]; then
+    usage
+fi
+
+case "$1" in
+    reputation|ticket-ip)
+        if [[ $# -ne 2 ]]; then
+            usage
+        fi
+        ACTION="$1"
+        IP="$2"
+        ;;
+    tickets)
+        if [[ $# -ne 1 ]]; then
+            usage
+        fi
+        ACTION="$1"
+        IP=""
+        ;;
+    *)
+        usage
+        ;;
+esac
+
+# Récupération du jeton Vigie
+if [[ -z "${VIGIE_TOKEN:-}" && -r /etc/mistral/vigie.env ]]; then
+    VIGIE_TOKEN="$(sed -n 's/^VIGIE_TOKEN=//p' /etc/mistral/vigie.env)"
+fi
+
+if [[ -z "${VIGIE_TOKEN:-}" ]]; then
+    echo "Erreur : jeton Vigie absent" >&2
+    exit 3
+fi
+
+# Adresse de base de l'API
+API="http://vigie.mistral.test:8080/api/v1"
+
+# Fonction commune pour effectuer les requêtes
+appel() {
+    local url="$1"
+    local code_http
+    local attente
+    local tentative
+
+    for tentative in 1 2 3 4 5 6; do
+
+        if code_http=$(curl -s -m 5 \
+            -H "Authorization: Bearer $VIGIE_TOKEN" \
+            -D "$ENTETES" \
+            -o "$CORPS" \
+            -w '%{http_code}' \
+            "$url"); then
+
+            if [[ "$code_http" == "401" ]]; then
+                echo "Erreur : jeton Vigie refusé (HTTP 401)" >&2
+                return 3
+            fi
+
+            if [[ "$code_http" == "429" ]]; then
+                if [[ "$tentative" -eq 6 ]]; then
+                    echo "Erreur : trop de requêtes après 6 tentatives" >&2
+                    return 1
+                fi
+
+                attente=$(awk 'tolower($1) == "retry-after:" {gsub(/\r/, "", $2); print $2; exit}' "$ENTETES")
+
+                if ! [[ "$attente" =~ ^[0-9]+$ ]]; then
+                    attente=1
+                fi
+
+                echo "HTTP 429 : attente de $attente seconde(s) avant de réessayer" >&2
+                sleep "$attente"
+                continue
+            fi
+
+            if [[ "$code_http" == "503" ]]; then
+                if [[ "$tentative" -eq 6 ]]; then
+                    echo "Erreur : Vigie indisponible après 6 tentatives" >&2
+                    return 1
+                fi
+
+                attente=$((2 ** (tentative - 1)))
+
+                echo "HTTP 503 : nouvelle tentative dans $attente seconde(s)" >&2
+                sleep "$attente"
+                continue
+            fi
+
+            printf '%s\n' "$code_http"
+            return 0
+
+        else
+            echo "Erreur : impossible de contacter Vigie" >&2
+            return 1
+        fi
+    done
+}
+
+# Fichiers temporaires communs à toutes les commandes
+CORPS=$(mktemp)
+ENTETES=$(mktemp)
+
+# Nettoyage automatique
+nettoyer() {
+    rm -f -- "$CORPS" "$ENTETES"
+}
+
+trap nettoyer EXIT
+
+# Commande tickets
+if [[ "$ACTION" == "tickets" ]]; then
+
+    CODE_HTTP=$(appel "$API/tickets")
+    echo "Code HTTP : $CODE_HTTP"
+
+    if [[ "$CODE_HTTP" == "200" ]]; then
+        echo "Nombre de tickets :"
+        jq '.tickets | length' "$CORPS"
+    else
+        echo "Réponse HTTP à gérer : $CODE_HTTP" >&2
+        exit 1
+    fi
+fi
+
+# Commande reputation : consulter la réputation d'une IP
+if [[ "$ACTION" == "reputation" ]]; then
+
+    CODE_HTTP=$(appel "$API/reputation/$IP")
+
+    if [[ "$CODE_HTTP" == "200" ]]; then
+        echo "Réputation de l'adresse IP $IP :"
+        jq '.' "$CORPS"
+    else
+        echo "Erreur : réponse HTTP $CODE_HTTP" >&2
+        exit 1
+    fi
+fi
+
+# Commande ticket-ip : rechercher les tickets associés à une IP
+if [[ "$ACTION" == "ticket-ip" ]]; then
+
+    CODE_HTTP=$(appel "$API/tickets?ip=$IP")
+
+    if [[ "$CODE_HTTP" == "200" ]]; then
+        echo "Tickets associés à l'adresse IP $IP :"
+        jq '.tickets' "$CORPS"
+    else
+        echo "Erreur : réponse HTTP $CODE_HTTP" >&2
+        exit 1
+    fi
+fi
