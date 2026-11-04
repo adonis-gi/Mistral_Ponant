@@ -280,3 +280,78 @@ outils/vigie.sh ticket-ip 203.0.113.7
 Le jeton vient de `VIGIE_TOKEN`, ou à défaut de `/etc/mistral/vigie.env`, sans jamais être affiché. Le code HTTP est lu avec `curl -w '%{http_code}'` (et non `$?`, qui vaut 0 même sur une erreur 500) : `401` donne « jeton refusé » et le code 3, `429` attend `Retry-After`, `503` réessaie en attendant un peu plus à chaque fois.
 
 ---
+
+## Jour 4 : le parc Windows
+ 
+PowerShell 7 tourne dans le serveur du lab : on écrit les scripts `.ps1` dans `outils/` et on les lance dans le serveur.
+ 
+```bash
+python3 lab.py shell
+pwsh
+```
+ 
+### Penser en objets (quête 4.1)
+ 
+On charge l'inventaire une fois : `ConvertFrom-Json` transforme le JSON en objets, un par poste, avec leurs propriétés (`nom`, `site`, `os`, `build`, `defender`, `disque_pct`, `derniere_maj`, `utilisateur`).
+ 
+```powershell
+$p = Get-Content -Raw /srv/mistral/parc/postes.json | ConvertFrom-Json
+```
+ 
+**Question 2. Combien de postes compte le parc ?**
+ 
+```powershell
+$p.Count
+```
+ 
+`.Count` donne le nombre d'éléments de la liste : **60 postes**.
+ 
+**Question 3. Combien de postes par système d'exploitation, du plus fréquent au moins fréquent ?**
+ 
+```powershell
+$p | Group-Object os | Sort-Object Count -Descending | Select-Object Count, Name
+```
+ 
+`Group-Object` regroupe les objets par valeur de la propriété (l'équivalent de `sort | uniq -c`), chaque groupe porte un `Count` et un `Name`.
+ 
+| Système | Postes |
+|---|---:|
+| Windows 10 22H2 | 24 |
+| Windows 11 23H2 | 20 |
+| Windows 11 22H2 | 9 |
+| Windows 10 1909 | 4 |
+| Windows 10 21H2 | 3 |
+ 
+**Question 4. Quels postes n'ont pas d'antivirus actif ?**
+ 
+```powershell
+$p | Where-Object { -not $_.defender } | Select-Object nom, site, os
+```
+ 
+`$_` est le poste en cours dans le pipeline ; `defender` est un vrai booléen, `-not` garde ceux qui valent `False`. **8 postes** sans Defender : `PC-TOU-124`, `PC-AVI-133`, `PC-NIC-141`, `PC-VIT-119`, `PC-AVI-111`, `PC-FOS-106`, `PC-AVI-103` et `PC-AVI-150`, dont 4 à Avignon.
+ 
+**Question 5. Quels postes ont un disque rempli à plus de 90 %, du plus plein au moins plein ?**
+ 
+```powershell
+$p | Where-Object { $_.disque_pct -gt 90 } | Sort-Object disque_pct -Descending | Select-Object nom, site, disque_pct
+```
+ 
+`-gt` veut dire « plus grand que » ; `disque_pct` est un nombre, la comparaison est numérique. **14 postes**, de `PC-NIC-141` (99 %) à `PC-NIC-100` (91 %), dont 5 à Nice.
+ 
+**Question 6. Quels sont les 5 postes dont la dernière mise à jour est la plus ancienne au 5 novembre 2026 ?**
+ 
+```powershell
+$p | Select-Object nom, site, derniere_maj, @{n='jours'; e={ ([datetime]'2026-11-05' - [datetime]$_.derniere_maj).Days }} | Sort-Object jours -Descending | Select-Object -First 5
+```
+ 
+`@{n='jours'; e={ ... }}` ajoute une propriété calculée ; la soustraction de deux `[datetime]` donne une durée, `.Days` son nombre de jours. Les dates se calculent, elles ne se comparent pas comme du texte.
+ 
+| Poste | Site | Dernière mise à jour | Jours |
+|---|---|---|---:|
+| PC-TOU-140 | Toulon | 2026-07-17 | 111 |
+| PC-NIC-105 | Nice | 2026-07-19 | 109 |
+| PC-VIT-157 | Vitrolles | 2026-07-26 | 102 |
+| PC-AVI-127 | Avignon | 2026-08-01 | 96 |
+| PC-NIC-118 | Nice | 2026-08-10 | 87 |
+ 
+**À retenir.** Trois postes cumulent les problèmes : `PC-NIC-141` (sans antivirus, disque à 99 %), `PC-TOU-124` (sans antivirus, disque à 97 %) et `PC-AVI-150` (sans antivirus, disque à 92 %). Ce sont les premiers à traiter.
