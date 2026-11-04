@@ -11,6 +11,7 @@ Analyse un fichier de log d'authentification pour identifier les IP ayant le plu
 Options:
   -h          Affiche cette aide et quitte.
   -n N        Nombre d'attaquants à afficher (défaut : 5).
+  -q          N'écrit pas de rapport dans rapports/ (pour la veille planifiée).
 
 Arguments:
   FICHIER     Chemin du fichier log à analyser (défaut : /var/log/mistral/auth.log).
@@ -23,6 +24,7 @@ EOF
 
 # 1. Valeurs par défaut
 N=5
+SANS_RAPPORT=0
 FILE="/var/log/mistral/auth.log"
 
 # Met les rendus du scripts dans ../rapports, pour une meilleure organisation.
@@ -31,7 +33,7 @@ mkdir -p "$RAPPORTS"
 RES="$RAPPORTS/top-attaquants-$(date +%Y-%m-%d-%H-%M-%S).txt"
 
 # 2. Gestion des options avec getopts
-while getopts ":hn:" opt; do
+while getopts ":hn:q" opt; do
   case "$opt" in
     h)
       afficher_aide
@@ -39,6 +41,9 @@ while getopts ":hn:" opt; do
       ;;
     n)
       N="$OPTARG"
+      ;;
+    q)
+      SANS_RAPPORT=1
       ;;
     :)
       echo "Erreur : L'option -$OPTARG exige un argument." >&2
@@ -68,13 +73,17 @@ if [ ! -r "$FILE" ]; then
 fi
 
 # 5. Extraction, comptage, tri, affichage écran ET sauvegarde fichier
-grep 'Failed password' "$FILE" | \
+RESULTAT=$(grep 'Failed password' "$FILE" | \
   awk '{ for (i = 1; i <= NF; i++) if ($i == "from") print $(i+1) }' | \
   sort | \
   uniq -c | \
   sort -rn | \
   head -n "$N" | \
-  awk '{print $1, $2}' | \
-  tee "$RES"
+  awk '{print $1, $2}')
 
-echo "Résultats stockés dans $RES." >&2
+echo "$RESULTAT"
+
+if [ "$SANS_RAPPORT" -eq 0 ]; then
+  echo "$RESULTAT" > "$RES"
+  echo "Résultats stockés dans $RES." >&2
+fi

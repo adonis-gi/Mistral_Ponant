@@ -92,8 +92,8 @@ def traiter_rapport(fichier_rapport: str, seuil: int, jeton: str, simulation: bo
         while True:
             # Limite proactive : pause de 6 secondes après 5 requêtes envoyées
             if compteur_requetes >= 5:
-                print("[RATE LIMIT] Seuil de 5 requêtes atteint. Pause de 6 secondes...", file=sys.stderr)
-                time.sleep(6)
+                print("[RATE LIMIT] Seuil de 5 requêtes atteint. Pause de 1 seconde...", file=sys.stderr)
+                time.sleep(1.1)
                 compteur_requetes = 0
 
             compteur_requetes += 1
@@ -109,8 +109,8 @@ def traiter_rapport(fichier_rapport: str, seuil: int, jeton: str, simulation: bo
 
             # Gestion réactive si l'API renvoie HTTP 429
             if response.status_code == 429:
-                print("[ERREUR 429] Limite de débit atteinte (HTTP 429). Pause de 6 secondes avant réessai...", file=sys.stderr)
-                time.sleep(6)
+                print("[ERREUR 429] Limite de débit atteinte (HTTP 429). Pause de 1 seconde avant réessai...", file=sys.stderr)
+                time.sleep(1.1)
                 compteur_requetes = 0
                 continue
 
