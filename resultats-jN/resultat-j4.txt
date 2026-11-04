@@ -1,0 +1,12 @@
+Opération Mistral, vérification J4
+Guilde : ponant
+Date : 2026-11-04 16:09:04
+
+OK   6/6  Audit-Parc.ps1 : non-conformes.csv (nom;site;raisons)
+OK   3/3  non-conformes.json : mêmes postes, raisons en liste
+OK   2/2  Audit-Parc.ps1 -Seuil 80 : le paramètre est pris en compte
+OK   5/5  Get-ComptesDormants.ps1 : comptes humains actifs, tri par inactivité
+OK   4/4  Envoyer-Tickets.ps1 lancé deux fois : un ticket par poste, pas de doublon
+
+NOTE : 20/20   XP gagnée : 200
+Sceau : 5f7e1b9e8ee8
