@@ -191,3 +191,167 @@ Pour Ponant, la première page d'incidents (`par_page=20`) annonce **75 incident
 | `404` | route inconnue, ou page d'incidents au-delà de la dernière | pour la pagination, s'arrêter à la dernière page indiquée par `pages` |
 
 Lors des 12 requêtes d'affilée, les 5 premières reçoivent `200`, les suivantes `429` : la limite est de 5 requêtes par seconde et par guilde.
+
+### `outils/enrichir.py --entree FICHIER --sortie DOSSIER` (quête 3.2)
+
+Interroge Vigie pour chaque adresse du fichier d'entrée (une adresse par ligne, ou la sortie `NOMBRE ADRESSE` de `top-attaquants.sh` : le dernier mot de chaque ligne, sans doublon) et écrit dans DOSSIER :
+
+- `rapport.json` : une liste `{"ip", "score", "categories"}`, du score le plus haut au plus bas, puis par adresse ;
+- `rapport.csv` : `ip;score;categories` (catégories séparées par des virgules) ;
+- `enrichir.log` : le journal, avec des `INFO` pour chaque adresse et des `WARNING` pour chaque reprise.
+
+```bash
+outils/top-attaquants.sh -n 20 > /tmp/top.txt
+python3 outils/enrichir.py --entree /tmp/top.txt --sortie /tmp/rapport
+jq '.[:3]' /tmp/rapport/rapport.json
+```
+
+Le client Vigie est intégré au script (classe `Vigie`) : une `requests.Session` qui envoie le jeton à chaque appel, un limiteur à 5 requêtes par seconde, et des reprises sur 429, 503 et coupure réseau.
+
+| Option | Rôle | Quête annexe |
+|---|---|---|
+| `--cache` | réutilise les réponses de moins d'une heure (`~/.cache/mistral/reputation.json`), journalise `cache` ou `api` pour chaque adresse | E1 |
+| `--markdown` | écrit `rapport.md`, le tableau des adresses dangereuses, à coller dans le README | E3 |
+| `--seuil N` | score à partir duquel une adresse est dangereuse (80 par défaut) | E3 |
+
+Comportements ajoutés par les quêtes annexes :
+
+- **E2** : sans `Retry-After`, attentes de 1, 2, 4, 8 et 16 secondes, avec un petit hasard pour que tous les clients ne reviennent pas en même temps.
+- **E7** : sur un `401`, un seul appel, le message « jeton refusé » et le code 3.
+- **E8** : le limiteur attend juste ce qu'il faut entre deux appels ; un enrichissement seul ne provoque aucun `429`.
+- **E10** : si Vigie tombe, l'outil écrit ce qu'il a pu obtenir, liste les adresses manquées dans `manquees.txt` et sort avec le code 4. Relancé avec le même `--sortie`, il reprend les adresses déjà connues et n'interroge que les manquées.
+
+Codes de sortie : `0` succès, `1` erreur de l'API, `2` fichier d'entrée absent, `3` jeton absent ou refusé, `4` rapport incomplet (Vigie indisponible).
+
+**Résultat pour Ponant.** Sur les 17 adresses du journal SSH, **9 sont dangereuses** (score de 80 ou plus), toutes dans la plage `203.0.113.x`, classées `bruteforce-ssh` et souvent `botnet`. En tête : `203.0.113.213` (99), `203.0.113.183` (94) et `203.0.113.66` (93). L'adresse `192.0.2.163`, troisième du classement SSH de lundi, n'a qu'un score de 12 : elle frappe fort mais n'est pas connue comme malveillante. Le classement de lundi dit qui frappe, Vigie dit qui est dangereux.
+
+### `outils/incidents.py --sortie FICHIER.csv` (quête 3.3)
+
+Récupère **toutes les pages** d'incidents (lit `pages` dans la page 1, puis demande les suivantes), les compte par site et par gravité avec un `Counter` dont la clé est `(site, gravite)`, et écrit `site;haute;moyenne;basse;total`, une ligne par site dans l'ordre alphabétique. Chaque page est redemandée sur `429` ou `503` (6 essais au plus) : une page manquée fausserait les totaux, donc l'outil s'arrête en erreur plutôt que d'écrire un tableau faux.
+
+```bash
+python3 outils/incidents.py --sortie /tmp/incidents.csv
+column -s ';' -t /tmp/incidents.csv
+```
+
+**Bilan des incidents pour Sabine** (75 incidents, 4 pages de 20) :
+
+| Site | Haute | Moyenne | Basse | Total |
+|---|---:|---:|---:|---:|
+| Avignon | 2 | 5 | 11 | 18 |
+| Fos | 2 | 3 | 7 | 12 |
+| Nice | 2 | 4 | 6 | 12 |
+| Toulon | 1 | 7 | 9 | 17 |
+| Vitrolles | 3 | 5 | 8 | 16 |
+| **Total** | **10** | **24** | **41** | **75** |
+
+La somme des totaux (75) est égale au total annoncé par l'API. S'arrêter à la page 1 n'en aurait compté que 20.
+
+### `outils/tickets.py --rapport rapport.json [--seuil 80] [--simulation]` (quête 3.4)
+
+Ouvre un ticket Vigie pour chaque adresse dont le score atteint le seuil, **sauf si elle en a déjà un** :
+
+1. `GET /tickets?ip=ADRESSE` : si la liste `tickets` de la réponse n'est pas vide, l'adresse est passée ;
+2. sinon, `POST /tickets` avec `{"ip", "score", "titre": "Adresse malveillante ..."}`.
+
+L'outil affiche un résumé : tickets créés et tickets déjà ouverts. C'est l'idempotence : relancé, il ne change rien quand tout est déjà fait. Vendredi, cron le lancera toutes les deux minutes sans créer de doublon.
+
+```bash
+python3 outils/tickets.py --rapport /tmp/rapport/rapport.json
+python3 outils/tickets.py --rapport /tmp/rapport/rapport.json
+```
+
+Le premier passage crée 9 tickets, le second en crée 0 et en trouve 9 déjà ouverts.
+
+- `--simulation` (annexe **E4**) : affiche les tickets qui seraient créés, sans rien créer ; le nombre de tickets dans Vigie ne bouge pas.
+
+### `outils/vigie.sh` (quête 3.5)
+
+<!-- À garder seulement si vigie.sh est fusionné ; adapter à la version de la guilde. -->
+
+Interroge Vigie en Bash, avec `curl` et `jq`, sur un serveur sans Python :
+
+```bash
+outils/vigie.sh reputation 203.0.113.7
+outils/vigie.sh tickets
+outils/vigie.sh ticket-ip 203.0.113.7
+```
+
+Le jeton vient de `VIGIE_TOKEN`, ou à défaut de `/etc/mistral/vigie.env`, sans jamais être affiché. Le code HTTP est lu avec `curl -w '%{http_code}'` (et non `$?`, qui vaut 0 même sur une erreur 500) : `401` donne « jeton refusé » et le code 3, `429` attend `Retry-After`, `503` réessaie en attendant un peu plus à chaque fois.
+
+---
+
+## Jour 4 : le parc Windows
+ 
+PowerShell 7 tourne dans le serveur du lab : on écrit les scripts `.ps1` dans `outils/` et on les lance dans le serveur.
+ 
+```bash
+python3 lab.py shell
+pwsh
+```
+ 
+### Penser en objets (quête 4.1)
+ 
+On charge l'inventaire une fois : `ConvertFrom-Json` transforme le JSON en objets, un par poste, avec leurs propriétés (`nom`, `site`, `os`, `build`, `defender`, `disque_pct`, `derniere_maj`, `utilisateur`).
+ 
+```powershell
+$p = Get-Content -Raw /srv/mistral/parc/postes.json | ConvertFrom-Json
+```
+ 
+**Question 2. Combien de postes compte le parc ?**
+ 
+```powershell
+$p.Count
+```
+ 
+`.Count` donne le nombre d'éléments de la liste : **60 postes**.
+ 
+**Question 3. Combien de postes par système d'exploitation, du plus fréquent au moins fréquent ?**
+ 
+```powershell
+$p | Group-Object os | Sort-Object Count -Descending | Select-Object Count, Name
+```
+ 
+`Group-Object` regroupe les objets par valeur de la propriété (l'équivalent de `sort | uniq -c`), chaque groupe porte un `Count` et un `Name`.
+ 
+| Système | Postes |
+|---|---:|
+| Windows 10 22H2 | 24 |
+| Windows 11 23H2 | 20 |
+| Windows 11 22H2 | 9 |
+| Windows 10 1909 | 4 |
+| Windows 10 21H2 | 3 |
+ 
+**Question 4. Quels postes n'ont pas d'antivirus actif ?**
+ 
+```powershell
+$p | Where-Object { -not $_.defender } | Select-Object nom, site, os
+```
+ 
+`$_` est le poste en cours dans le pipeline ; `defender` est un vrai booléen, `-not` garde ceux qui valent `False`. **8 postes** sans Defender : `PC-TOU-124`, `PC-AVI-133`, `PC-NIC-141`, `PC-VIT-119`, `PC-AVI-111`, `PC-FOS-106`, `PC-AVI-103` et `PC-AVI-150`, dont 4 à Avignon.
+ 
+**Question 5. Quels postes ont un disque rempli à plus de 90 %, du plus plein au moins plein ?**
+ 
+```powershell
+$p | Where-Object { $_.disque_pct -gt 90 } | Sort-Object disque_pct -Descending | Select-Object nom, site, disque_pct
+```
+ 
+`-gt` veut dire « plus grand que » ; `disque_pct` est un nombre, la comparaison est numérique. **14 postes**, de `PC-NIC-141` (99 %) à `PC-NIC-100` (91 %), dont 5 à Nice.
+ 
+**Question 6. Quels sont les 5 postes dont la dernière mise à jour est la plus ancienne au 5 novembre 2026 ?**
+ 
+```powershell
+$p | Select-Object nom, site, derniere_maj, @{n='jours'; e={ ([datetime]'2026-11-05' - [datetime]$_.derniere_maj).Days }} | Sort-Object jours -Descending | Select-Object -First 5
+```
+ 
+`@{n='jours'; e={ ... }}` ajoute une propriété calculée ; la soustraction de deux `[datetime]` donne une durée, `.Days` son nombre de jours. Les dates se calculent, elles ne se comparent pas comme du texte.
+ 
+| Poste | Site | Dernière mise à jour | Jours |
+|---|---|---|---:|
+| PC-TOU-140 | Toulon | 2026-07-17 | 111 |
+| PC-NIC-105 | Nice | 2026-07-19 | 109 |
+| PC-VIT-157 | Vitrolles | 2026-07-26 | 102 |
+| PC-AVI-127 | Avignon | 2026-08-01 | 96 |
+| PC-NIC-118 | Nice | 2026-08-10 | 87 |
+ 
+**À retenir.** Trois postes cumulent les problèmes : `PC-NIC-141` (sans antivirus, disque à 99 %), `PC-TOU-124` (sans antivirus, disque à 97 %) et `PC-AVI-150` (sans antivirus, disque à 92 %). Ce sont les premiers à traiter.
