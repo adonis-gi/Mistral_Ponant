@@ -355,3 +355,37 @@ $p | Select-Object nom, site, derniere_maj, @{n='jours'; e={ ([datetime]'2026-11
 | PC-NIC-118 | Nice | 2026-08-10 | 87 |
  
 **À retenir.** Trois postes cumulent les problèmes : `PC-NIC-141` (sans antivirus, disque à 99 %), `PC-TOU-124` (sans antivirus, disque à 97 %) et `PC-AVI-150` (sans antivirus, disque à 92 %). Ce sont les premiers à traiter.
+
+### Les comptes dormants (quête 4.3)
+
+`outils/Get-ComptesDormants.ps1 -Fichier utilisateurs.csv -Sortie dormants.csv [-Jours 90] [-Date AAAA-MM-JJ]`
+
+Garde les comptes **humains et actifs** de l'annuaire (ni comptes de service `svc-...`, ni comptes désactivés) dont la dernière connexion (`DernierLogon`) date de `-Jours` jours ou plus à la `-Date`. Écrit `Login;Service;JoursInactif`, du compte le plus ancien au plus récent, puis par ordre alphabétique de login.
+
+```bash
+pwsh -File outils/Get-ComptesDormants.ps1 -Fichier /srv/mistral/parc/utilisateurs.csv -Sortie /tmp/dormants.csv -Date 2026-11-05
+```
+
+**Liste pour Jeanne, au 5 novembre 2026 : 17 comptes dormants depuis 90 jours ou plus.**
+
+| Login | Service | Jours sans connexion |
+|---|---|---:|
+| u1053 | Direction | 368 |
+| u1074 | Exploitation | 362 |
+| u1014 | Transport | 329 |
+| u1024 | Compta | 311 |
+| u1075 | Direction | 307 |
+| u1008 | Exploitation | 300 |
+| u1060 | DSI | 295 |
+| u1054 | Direction | 293 |
+| u1003 | RH | 272 |
+| u1059 | Transport | 222 |
+| u1049 | Exploitation | 202 |
+| u1056 | Direction | 199 |
+| u1048 | Transport | 174 |
+| u1020 | Compta | 154 |
+| u1038 | Exploitation | 120 |
+| u1028 | DSI | 116 |
+| u1061 | Exploitation | 116 |
+
+Onze comptes n'ont pas servi depuis plus de 200 jours, et `u1053` depuis plus d'un an. Les plus sensibles sont les 4 comptes de la Direction et les 2 de la DSI : ce sont les premiers à désactiver, après vérification auprès des services.
