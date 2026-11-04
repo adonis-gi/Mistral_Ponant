@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+"""Ouvre un ticket Vigie pour chaque adresse dangereuse du rapport, une seule fois par adresse."""
+import argparse
+import json
+import os
+import sys
+import time
+import requests
+
+API_BASE_URL = os.environ.get("VIGIE_URL", "http://vigie.mistral.test:8080/api/v1") + "/tickets"
+ENV_FILE_PATH = "/etc/mistral/vigie.env"
+
+
+class CustomArgumentParser(argparse.ArgumentParser):
+    """Affiche automatiquement l'aide complète en cas d'erreur d'argument."""
+    def error(self, message):
+        sys.stderr.write(f"Erreur de syntaxe : {message}\n\n")
+        self.print_help(sys.stderr)
+        sys.exit(2)
+
+
+def charger_jeton(chemin_env: str = ENV_FILE_PATH) -> str:
+    """Charge le jeton : variable VIGIE_TOKEN d'abord, sinon le fichier de configuration."""
+    jeton_env = os.environ.get("VIGIE_TOKEN", "").strip()
+    if jeton_env:
+        return jeton_env
+    if not os.path.exists(chemin_env):
+        print(f"Erreur : Le fichier de configuration '{chemin_env}' est introuvable.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        with open(chemin_env, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    if "=" in line:
+                        _, val = line.split("=", 1)
+                        return val.strip("'\"")
+                    return line
+    except Exception as e:
+        print(f"Erreur lors de la lecture de '{chemin_env}' : {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Erreur : Aucun jeton valide trouvé dans '{chemin_env}'.", file=sys.stderr)
+    sys.exit(1)
+
+
+def gerer_erreur_http(e: requests.exceptions.HTTPError, ip: str) -> None:
+    """Interprète et affiche les erreurs HTTP spécifiques renvoyées par l'API."""
+    status_code = e.response.status_code if e.response is not None else None
+
+    if status_code == 401:
+        print(f"[ERREUR 401] Authentification échouée pour l'IP {ip} : Jeton invalide ou expiré.", file=sys.stderr)
+    elif status_code == 403:
+        print(f"[ERREUR 403] Accès interdit pour l'IP {ip} : Droits insuffisants.", file=sys.stderr)
+    elif status_code == 404:
+        print(f"[ERREUR 404] Ressource API introuvable pour l'IP {ip}.", file=sys.stderr)
+    elif status_code == 429:
+        print(f"[ERREUR 429] Trop de requêtes envoyées à l'API pour l'IP {ip}.", file=sys.stderr)
+    elif status_code == 503:
+        print(f"[ERREUR 503] Service indisponible pour l'IP {ip} : L'API Vigie est temporairement inaccessible.", file=sys.stderr)
+    else:
+        print(f"[ERREUR HTTP {status_code}] Échec pour l'IP {ip} : {e}", file=sys.stderr)
+
+
+def traiter_rapport(fichier_rapport: str, seuil: int, jeton: str, simulation: bool = False) -> bool:
+    """Parcourt le rapport, vérifie l'idempotence, applique le rate-limiting et crée les tickets."""
+    try:
+        with open(fichier_rapport, "r", encoding="utf-8") as f:
+            donnees = json.load(f)
+    except FileNotFoundError:
+        print(f"Erreur : Le fichier '{fichier_rapport}' est introuvable.", file=sys.stderr)
+        return False
+    except json.JSONDecodeError as e:
+        print(f"Erreur : Le fichier '{fichier_rapport}' n'est pas un JSON valide ({e}).", file=sys.stderr)
+        return False
+
+    headers = {
+        "Authorization": f"Bearer {jeton}",
+        "Content-Type": "application/json"
+    }
+
+    ips_traitees = set()
+    nb_crees = 0
+    nb_deja_ouverts = 0
+    succes_global = True
+    compteur_requetes = 0
+
+    def envoyer_requete_avec_rate_limit(method: str, url: str, params=None, json_data=None):
+        nonlocal compteur_requetes
+
+        while True:
+            # Limite proactive : pause de 6 secondes après 5 requêtes envoyées
+            if compteur_requetes >= 5:
+                print("[RATE LIMIT] Seuil de 5 requêtes atteint. Pause de 6 secondes...", file=sys.stderr)
+                time.sleep(6)
+                compteur_requetes = 0
+
+            compteur_requetes += 1
+
+            response = requests.request(
+                method=method,
+                url=url,
+                headers=headers,
+                params=params,
+                json=json_data,
+                timeout=10
+            )
+
+            # Gestion réactive si l'API renvoie HTTP 429
+            if response.status_code == 429:
+                print("[ERREUR 429] Limite de débit atteinte (HTTP 429). Pause de 6 secondes avant réessai...", file=sys.stderr)
+                time.sleep(6)
+                compteur_requetes = 0
+                continue
+
+            response.raise_for_status()
+            return response
+
+    for item in donnees:
+        ip = item.get("ip")
+        score = item.get("score", 0)
+
+        # Filtrage : IP absente ou score inférieur au seuil
+        if not ip or score < seuil:
+            continue
+
+        # Idempotence locale durant la même exécution
+        if ip in ips_traitees:
+            print(f"[IGNORÉ] IP {ip} : déjà traitée dans cette session.")
+            continue
+
+        try:
+            # 1. Idempotence distante : GET /tickets?ip=ADRESSE
+            response_get = envoyer_requete_avec_rate_limit("GET", API_BASE_URL, params={"ip": ip})
+            # L'API répond {"tickets": [...]} : c'est la liste qu'il faut tester, pas le dictionnaire
+            tickets_existants = response_get.json().get("tickets", [])
+
+            if tickets_existants:
+                print(f"[IGNORÉ] IP {ip} (score: {score}) : un ticket existe déjà sur l'API.")
+                nb_deja_ouverts += 1
+                ips_traitees.add(ip)
+                continue
+
+            # 2. Création réelle ou simulation
+            if simulation:
+                print(f"[SIMULATION] Ticket à créer pour l'IP {ip} (score: {score}). Aucune modification envoyée.")
+            else:
+                payload = {
+                    "ip": ip,
+                    "score": score,
+                    "titre": f"Adresse malveillante {ip}"
+                }
+
+                response_post = envoyer_requete_avec_rate_limit("POST", API_BASE_URL, json_data=payload)
+                print(f"[CRÉÉ] Ticket créé pour l'IP {ip} (score: {score}).")
+                nb_crees += 1
+
+            ips_traitees.add(ip)
+
+        except requests.exceptions.HTTPError as e:
+            gerer_erreur_http(e, ip)
+            succes_global = False
+        except requests.exceptions.ConnectionError:
+            print(f"[ERREUR RÉSEAU] Impossible de contacter l'API Vigie pour l'IP {ip}.", file=sys.stderr)
+            succes_global = False
+        except requests.exceptions.Timeout:
+            print(f"[ERREUR TIMEOUT] L'API Vigie n'a pas répondu dans le délai imparti pour l'IP {ip}.", file=sys.stderr)
+            succes_global = False
+        except requests.RequestException as e:
+            print(f"[ERREUR API] Erreur imprévue pour l'IP {ip} : {e}", file=sys.stderr)
+            succes_global = False
+
+    print(f"Résumé : {nb_crees} tickets créés, {nb_deja_ouverts} tickets déjà ouverts (seuil {seuil}).")
+    return succes_global
+
+
+def main() -> int:
+    parser = CustomArgumentParser(
+        description="Générateur de tickets Vigie à partir d'un rapport de sécurité JSON.",
+        epilog="Exemples d'utilisation :\n"
+               "  python3 tickets.py --rapport rapport.json\n"
+               "  python3 tickets.py --rapport rapport.json --seuil 90\n"
+               "  python3 tickets.py --rapport rapport.json --simulation",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "-r", "--rapport",
+        required=True,
+        help="Chemin obligatoire vers le fichier JSON de rapport (ex: rapport.json)"
+    )
+    parser.add_argument(
+        "-s", "--seuil",
+        type=int,
+        default=80,
+        help="Seuil de score minimal pour déclencher la création d'un ticket (défaut : 80)"
+    )
+    parser.add_argument(
+        "--simulation",
+        action="store_true",
+        help="Mode simulation : affiche les tickets à créer sans effectuer d'appel POST"
+    )
+
+    if len(sys.argv) == 1:
+        parser.print_help()
+        return 0
+
+    args = parser.parse_args()
+
+    # Chargement du jeton d'authentification
+    jeton = charger_jeton(ENV_FILE_PATH)
+
+    # Traitement du fichier
+    succes = traiter_rapport(args.rapport, args.seuil, jeton, simulation=args.simulation)
+
+    # Code de retour transmis à sys.exit()
+    return 0 if succes else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+

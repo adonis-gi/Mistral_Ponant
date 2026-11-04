@@ -149,3 +149,45 @@ L'export RH de Ponant donne **42 comptes créés et 4 lignes rejetées** : deux 
 - Les adresses qui récoltent le plus de 404 viennent toutes des plages `203.0.113.x` et `198.51.100.x` (ADRESSE_1 : N, ADRESSE_2 : N, ADRESSE_3 : N) : ce ne sont pas des clients.
 - Elles demandent `/.git/config`, `/.env`, `/backup.zip` ou `/phpmyadmin/`, des fichiers qui contiennent des mots de passe ou le code du site : ce sont des robots qui cherchent des secrets oubliés.
 - Environ la moitié des requêtes vient d'outils automatiques (`curl`, `python-requests`), et les 404 tombent à toute heure, sans pause la nuit : rien de tout cela n'est humain. Il faut vérifier qu'aucun de ces fichiers n'est réellement exposé sur le serveur.
+
+
+---
+
+## Jour 3 : Vigie, l'API de sécurité
+
+### Le jeton
+
+Le jeton de la guilde est dans `/etc/mistral/vigie.env`, **dans le serveur uniquement**. Il n'entre jamais dans le dépôt, ni dans un fichier suivi, ni dans un commit, ni dans la crontab. On le charge dans le terminal avant d'utiliser les outils :
+
+```bash
+set -a
+. /etc/mistral/vigie.env
+set +a
+```
+
+`set -a` exporte toutes les variables lues ensuite : les programmes lancés depuis ce terminal voient `VIGIE_TOKEN`. Le jeton s'envoie dans l'en-tête `Authorization: Bearer $VIGIE_TOKEN`.
+
+### Découverte de l'API (quête 3.1)
+
+| Route | Rôle |
+|---|---|
+| `GET /api/v1/` | accueil, liste des routes (sans jeton) |
+| `GET /api/v1/reputation/<ip>` | score de réputation d'une adresse, ses catégories et son pays |
+| `GET /api/v1/incidents?page=N&par_page=M` | incidents de sécurité, paginés (50 par page au plus) |
+| `GET /api/v1/tickets?ip=<ip>` | tickets déjà ouverts pour une adresse |
+| `POST /api/v1/tickets` | ouvrir un ticket |
+
+Pour Ponant, la première page d'incidents (`par_page=20`) annonce **75 incidents répartis sur 4 pages** : un outil qui ne lit que la première page en manque 55.
+
+### Codes HTTP observés et conduite de l'outil
+
+| Code | Quand | Ce que l'outil doit faire |
+|---|---|---|
+| `200` | requête acceptée | lire le JSON et continuer |
+| `401` | jeton absent ou invalide | s'arrêter tout de suite avec un message clair (« charger /etc/mistral/vigie.env ») : réessayer ne sert à rien |
+| `429` | plus de 5 requêtes par seconde | attendre la durée de l'en-tête `Retry-After` (1 seconde), puis réessayer ; ralentir le rythme pour ne plus le provoquer |
+| `503` | panne momentanée (environ une requête de réputation sur 7) | réessayer après une courte pause, en allongeant l'attente à chaque échec, avec un nombre maximal d'essais |
+| `400` | paramètre invalide (adresse mal formée, page non numérique) | ne pas réessayer : signaler l'entrée fautive et passer à la suivante |
+| `404` | route inconnue, ou page d'incidents au-delà de la dernière | pour la pagination, s'arrêter à la dernière page indiquée par `pages` |
+
+Lors des 12 requêtes d'affilée, les 5 premières reçoivent `200`, les suivantes `429` : la limite est de 5 requêtes par seconde et par guilde.
