@@ -353,8 +353,48 @@ $p | Select-Object nom, site, derniere_maj, @{n='jours'; e={ ([datetime]'2026-11
 | PC-VIT-157 | Vitrolles | 2026-07-26 | 102 |
 | PC-AVI-127 | Avignon | 2026-08-01 | 96 |
 | PC-NIC-118 | Nice | 2026-08-10 | 87 |
- 
+
 **À retenir.** Trois postes cumulent les problèmes : `PC-NIC-141` (sans antivirus, disque à 99 %), `PC-TOU-124` (sans antivirus, disque à 97 %) et `PC-AVI-150` (sans antivirus, disque à 92 %). Ce sont les premiers à traiter.
+
+### L'audit du parc (Quête 4.2)
+
+`outils/Audit-Parc.ps1 -Fichier postes.json -Sortie /dossier [-Seuil 90] [-JoursMaj 30] [-BuildMin 19045] [-Date AAAA-MM-JJ] [-Html]`
+
+Audite l'inventaire JSON des postes du parc informatique et génère les rapports de non-conformité dans le dossier de sortie spécifié (`non-conformes.csv` avec les raisons séparées par `|`, `non-conformes.json` avec la liste des raisons sous forme de tableau, et `non-conformes.html` avec un tableau par site si l'option `-Html` est activée).
+
+Les motifs de non-conformité sont évalués et enregistrés dans cet ordre strict :
+1. `build` : version du build Windows inférieure à `-BuildMin` (par défaut `19045`).
+2. `defender` : antivirus Windows Defender désactivé ou absent (`defender: false`).
+3. `disque` : occupation du disque strictement supérieure à `-Seuil` % (par défaut `90`, plage autorisée de 50 à 100).
+4. `maj` : dernière mise à jour remontant à plus de `-JoursMaj` jours (par défaut `30`).
+
+Le script intègre une validation stricte des paramètres en amont (`-Fichier` doit exister via `Test-Path`, `-Seuil` doit être compris entre 50 et 100) et retourne des messages d'erreur explicites en français. À la fin du traitement, il affiche en console un tableau récapitulatif classant les sites du pire au meilleur en nombre de machines non conformes.
+
+```bash
+pwsh -File outils/Audit-Parc.ps1 -Fichier /srv/mistral/parc/postes.json -Sortie /tmp/audit -Date 2026-11-05 -Seuil 80 -Html
+```
+
+**Résultats de l'audit au 5 novembre 2026 :**
+
+Résumé par site (du pire au meilleur) :
+| Site | NonConformes |
+| :--- | :--- |
+| Marseille | 14 |
+| Vitrolles | 8 |
+| Lyon | 3 |
+| Paris | 1 |
+
+Sur l'ensemble du parc audité, les machines non conformes ont été répertoriées dans les rapports CSV, JSON et HTML. La vue HTML permet au comité de direction de consulter l'état du parc directement dans un navigateur web, tandis que le fichier JSON sert d'entrée au script `Envoyer-Tickets.ps1` pour l'ouverture automatique des tickets d'incident sur l'API Vigie.
+
+Liste des sites triés par machines non-conformes : 
+
+| Site | Non-conformes |
+|--- |---:|
+| Avignon | 8 |
+| Nice | 8 |
+| Vitrolles | 7 |
+| Fos | 5 |
+| Toulon | 5 |
 
 ### Les comptes dormants (quête 4.3)
 
@@ -389,3 +429,36 @@ pwsh -File outils/Get-ComptesDormants.ps1 -Fichier /srv/mistral/parc/utilisateur
 | u1061 | Exploitation | 116 |
 
 Onze comptes n'ont pas servi depuis plus de 200 jours, et `u1053` depuis plus d'un an. Les plus sensibles sont les 4 comptes de la Direction et les 2 de la DSI : ce sont les premiers à désactiver, après vérification auprès des services.
+
+### Les tickets PowerShell (Quête 4.4)
+
+```bash
+outils/Envoyer-Tickets.ps1 [-Fichier non-conformes.json]
+```
+
+Parcourt le rapport JSON issu de l'audit de parc et assure la création des tickets d'incident sur l'API Vigie pour chaque poste non conforme identifié.
+
+**Fonctionnalités clés :**
+- **Authentification sécurisée** : Récupère le jeton Bearer depuis `$env:VIGIE_TOKEN` ou depuis le fichier de configuration `/etc/mistral/vigie.env` (interrompt l'exécution avec le code `3` si aucun jeton n'est disponible).
+- **Vérification d'idempotence** : Effectue un appel `GET /api/v1/tickets?poste=NOM` au préalable afin d'éviter la création de tickets en double pour une machine déjà enregistrée.
+- **Régulation de débit (Rate-Limiting)** : Applique une pause proactive de 1 seconde toutes les 5 requêtes et intercepte les retours HTTP `429` pour temporiser automatiquement avant de rejouer la requête.
+
+```bash
+pwsh -File outils/Envoyer-Tickets.ps1 -Fichier /tmp/audit/non-conformes.json
+```
+
+**Exemple de retour d'exécution :**
+
+```text
+[IGNORÉ] Poste PC-MARS-01 : un ticket existe déjà sur l'API Vigie.
+[CRÉÉ] Ticket créé avec succès pour PC-VIT-04 (defender, maj).
+[RATE LIMIT] Seuil de 5 requêtes atteint. Pause de 1 seconde...
+[CRÉÉ] Ticket créé avec succès pour PC-LYON-02 (disque).
+
+
+### Quêtes annexes JOUR 4 : Comportements et fonctionnalités ajoutés
+
+- **Aide documentée (`Get-Help`)** : Intégration d'un bloc d'aide standardisé (`.SYNOPSIS`, `.DESCRIPTION`, `.PARAMETER`, `.EXAMPLE`) en tête des scripts PowerShell (`Audit-Parc.ps1`, `Envoyer-Tickets.ps1` et `Postes-Orphelins.ps1`), rendant l'aide accessible directement via `Get-Help <script.ps1> -Full`.
+- **Suite de tests Pester (`tests/Audit-Parc.Tests.ps1`)** : Mise en place d'un script de test automatisé sous Pester v5 vérifiant le comportement de l'audit (exclusion des postes conformes et détection ciblée des postes sans antivirus avec la raison `defender`).
+- **Export HTML et classement par site (`Audit-Parc.ps1`)** : Ajout de l'option `-Html` pour générer un fichier `non-conformes.html` structuré avec un tableau par site, accompagné d'un tableau récapitulatif en console triant les sites par nombre de postes non conformes (du pire au meilleur).
+- **Validation stricte des paramètres en français (`Audit-Parc.ps1`)** : Contrôle automatique des entrées utilisateur en amont de l'exécution avec rejet immédiat des valeurs absurdes (`[ValidateRange(50, 100)]` pour `-Seuil` et vérification d'existence `Test-Path` pour `-Fichier`), enrichi d'un message d'explication clair en français.
