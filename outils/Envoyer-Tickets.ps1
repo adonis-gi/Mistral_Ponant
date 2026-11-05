@@ -1,3 +1,34 @@
+<#
+.SYNOPSIS
+    Envoie des tickets d'incident à l'API Vigie pour chaque poste non conforme.
+
+.DESCRIPTION
+    Le script 'Envoyer-Tickets.ps1' parcourt un fichier JSON contenant une liste de postes informatiques non conformes,
+    vérifie l'existence de tickets déjà ouverts sur l'API Vigie pour éviter les doublons (idempotence),
+    puis crée un nouveau ticket pour chaque poste non encore traité.
+
+    Fonctionnalités clés :
+    - Récupération du jeton d'accès via $env:VIGIE_TOKEN ou le fichier /etc/mistral/vigie.env (exit code 3 en cas d'absence).
+    - Gestion du débit API (Rate-Limiting) : pause automatique de 6 secondes toutes les 5 requêtes et réessai en cas d'erreur HTTP 429.
+    - Vérification d'idempotence locale (session) et distante (requête GET par nom de poste).
+
+.PARAMETER Fichier
+    Chemin vers le fichier JSON contenant la liste des postes non conformes.
+    Par défaut, le script cherche le fichier 'non-conformes.json' dans le répertoire courant.
+
+.EXAMPLE
+    PS> .\Envoyer-Tickets.ps1
+    Exécute le script en utilisant le fichier 'non-conformes.json' par défaut.
+
+.EXAMPLE
+    PS> .\Envoyer-Tickets.ps1 -Fichier "./rapports/audit_vitrolles.json"
+    Exécute le script en spécifiant un fichier de rapport JSON personnalisé.
+
+.EXAMPLE
+    PS> Get-Help .\Envoyer-Tickets.ps1 -Full
+    Affiche l'aide complète du script avec la description de tous ses paramètres et exemples.
+#>
+
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
