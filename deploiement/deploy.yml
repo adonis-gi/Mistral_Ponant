@@ -1,0 +1,209 @@
+---
+- name: Déploiement de l'infrastructure Mistral pour Malik
+  hosts: servers
+  become: true
+  vars:
+    # Interpréteur Python système
+    ansible_python_interpreter: "/usr/bin/python3"
+
+    # Arborescence et chemins du projet
+    depot_dir: "/guilde"
+    outils_dir: "{{ depot_dir }}/outils"
+    rapports_dir: "{{ depot_dir }}/rapports"
+    data_parc_dir: "/srv/mistral/parc"
+    var_audit_dir: "/var/lib/mistral/audit"
+    var_log_dir: "/var/log/mistral"
+    etc_mistral_dir: "/etc/mistral"
+    outils_symlink_dir: "/outils"
+    sauvegarde_script_src: "{{ outils_dir }}/sauvegarde.sh"
+    sauvegarde_script_dest: "{{ outils_symlink_dir }}/sauvegarde.sh"
+
+    # Utilisateur et groupe système
+    app_user: "malik"
+    app_group: "informatique"
+
+    # Fichiers de configuration et dépendances
+    token_src_file: "files/.env"
+    token_dest_file: "{{ etc_mistral_dir }}/vigie.env"
+    requirements_src_file: "../requirements.txt"
+    requirements_dest_file: "{{ depot_dir }}/requirements.txt"
+    venv_dir: "{{ depot_dir }}/.venv"
+
+    # Paquets Microsoft PowerShell
+    ms_deb_url: "https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb"
+    ms_deb_dest: "/tmp/packages-microsoft-prod.deb"
+    pwsh_bin_path: "/usr/bin/pwsh"
+
+    # Liste des paquets système indispensables
+    sys_packages:
+      - curl
+      - jq
+      - git
+      - cron
+      - python3
+      - python3-pip
+      - python3-venv
+      - wget
+      - apt-transport-https
+      - sudo
+
+    # Planification des tâches cron
+    cron_veille_minute: "*/2"
+    cron_veille_job: "{{ outils_dir }}/veille.sh"
+    cron_sauvegarde_minute: "30"
+    cron_sauvegarde_hour: "4"
+    cron_sauvegarde_job: "{{ sauvegarde_script_dest }}"
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # 1. Préparation du système et installation des paquets de base
+    # -------------------------------------------------------------------------
+    - name: Mettre à jour le cache APT
+      apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Installer les paquets système
+      apt:
+        name: "{{ sys_packages }}"
+        state: present
+
+    # -------------------------------------------------------------------------
+    # 2. Installation idempotente de PowerShell (pwsh)
+    # -------------------------------------------------------------------------
+    - name: Vérifier la présence du binaire PowerShell
+      stat:
+        path: "{{ pwsh_bin_path }}"
+      register: pwsh_stat
+
+    - name: Télécharger le paquet Microsoft GPG
+      get_url:
+        url: "{{ ms_deb_url }}"
+        dest: "{{ ms_deb_dest }}"
+        mode: '0644'
+      when: not pwsh_stat.stat.exists
+
+    - name: Installer le paquet Microsoft GPG
+      apt:
+        deb: "{{ ms_deb_dest }}"
+      when: not pwsh_stat.stat.exists
+
+    - name: Mettre à jour le cache APT après l'ajout du dépôt Microsoft
+      apt:
+        update_cache: true
+      when: not pwsh_stat.stat.exists
+
+    - name: Installer PowerShell Core
+      apt:
+        name: powershell
+        state: present
+      when: not pwsh_stat.stat.exists
+      ignore_errors: "{{ ansible_check_mode }}"
+
+    - name: Supprimer le fichier d'installation temporaire .deb
+      file:
+        path: "{{ ms_deb_dest }}"
+        state: absent
+
+    # -------------------------------------------------------------------------
+    # 3. Création des identités système et des dossiers
+    # -------------------------------------------------------------------------
+    - name: Créer le groupe informatique
+      group:
+        name: "{{ app_group }}"
+        state: present
+
+    - name: Créer l'utilisateur Malik et l'ajouter à sudo
+      user:
+        name: "{{ app_user }}"
+        group: "{{ app_group }}"
+        groups: sudo
+        append: true
+        shell: /bin/bash
+        create_home: true
+        state: present
+
+    - name: Créer l'arborescence des répertoires
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        mode: '0755'
+      loop:
+        - "{{ depot_dir }}"
+        - "{{ outils_dir }}"
+        - "{{ rapports_dir }}"
+        - "{{ data_parc_dir }}"
+        - "{{ var_audit_dir }}"
+        - "{{ var_log_dir }}"
+        - "{{ etc_mistral_dir }}"
+        - "{{ outils_symlink_dir }}"
+
+    # -------------------------------------------------------------------------
+    # 4. Copie des scripts et création du lien symbolique
+    # -------------------------------------------------------------------------
+    - name: Copier les scripts dans /guilde/outils
+      copy:
+        src: "../outils/"
+        dest: "{{ outils_dir }}/"
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        mode: '0755'
+
+    - name: Créer le lien symbolique pour la sauvegarde
+      file:
+        src: "{{ sauvegarde_script_src }}"
+        dest: "{{ sauvegarde_script_dest }}"
+        state: link
+        force: true
+
+    # -------------------------------------------------------------------------
+    # 5. Configuration Python et dépôt du fichier de jeton
+    # -------------------------------------------------------------------------
+    - name: Copier requirements.txt
+      copy:
+        src: "{{ requirements_src_file }}"
+        dest: "{{ requirements_dest_file }}"
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        mode: '0644'
+
+    - name: Créer l'environnement virtuel Python et installer les dépendances
+      pip:
+        requirements: "{{ requirements_dest_file }}"
+        virtualenv: "{{ venv_dir }}"
+        virtualenv_command: python3 -m venv
+
+    - name: Déployer le fichier de jeton (.env) vers /etc/mistral/vigie.env
+      copy:
+        src: "{{ token_src_file }}"
+        dest: "{{ token_dest_file }}"
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        mode: '0600'
+
+    # -------------------------------------------------------------------------
+    # 6. Programmation des tâches Cron
+    # -------------------------------------------------------------------------
+    - name: Configurer la tâche cron de veille (toutes les 2 min)
+      cron:
+        name: "Veille automatique"
+        user: "{{ app_user }}"
+        minute: "{{ cron_veille_minute }}"
+        hour: "*"
+        job: "{{ cron_veille_job }}"
+
+    - name: Configurer la tâche cron de sauvegarde (4h30)
+      cron:
+        name: "Sauvegarde quotidienne"
+        user: "{{ app_user }}"
+        minute: "{{ cron_sauvegarde_minute }}"
+        hour: "{{ cron_sauvegarde_hour }}"
+        job: "{{ cron_sauvegarde_job }}"
+
+    - name: S'assurer que le service Cron est démarré
+      service:
+        name: cron
+        state: started
+        enabled: true
