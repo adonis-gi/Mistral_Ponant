@@ -14,6 +14,23 @@ erreur() {
     exit 1
 }
 
+
+JETON=/etc/mistral/vigie.env
+
+
+JETON="/etc/mistral/vigie.env"
+
+if [[ ! -f "$JETON" ]]; then
+    echo "Erreur : le fichier du jeton est introuvable." >&2
+    exit 1
+fi
+
+if [[ ! -r "$JETON" ]]; then
+    echo "Erreur : le jeton n'est pas lisible." >&2
+    exit 1
+fi
+
+
 echo "=== Installation du kit Mistral ==="
 
 # Vérifier qu'Ansible est installé
