@@ -1,0 +1,15 @@
+Opération Mistral, vérification J5
+Guilde : ponant
+Date : 2026-11-06 12:06:27
+
+OK   2/2  crontab : veille.sh au moins toutes les 5 minutes
+OK   1/1  crontab : chemin absolu vers veille.sh
+OK   2/2  crontab : sauvegarde.sh une fois par jour à heure fixe
+OK   1/1  le jeton n'est pas écrit dans la crontab
+OK   2/2  veille.sh se protège contre deux exécutions simultanées (flock)
+OK   6/6  un ticket, un seul, pour chaque adresse dangereuse du journal
+OK   3/3  aucun ticket pour les leurres
+OK   3/3  les adresses du Spectre sont signalées moins de 6 minutes après leur arrivée
+
+NOTE : 20/20   XP gagnée : 200
+Sceau : b2305b22ea18
