@@ -17,10 +17,12 @@ log() {
     echo "[$(date +%Y-%m-%dT%H:%M:%S)] $*"
 }
 
-mkdir -p "$ETAT"
+if ! mkdir -p "$ETAT" || ! exec 9>"$ETAT/veille.lock"; then
+    log "ERREUR : impossible de créer $ETAT/veille.lock (droits ?), veille arrêtée"
+    exit 1
+fi
 
 # Verrou : si une veille tourne encore, celle-ci sort tout de suite, sans erreur
-exec 9>"$ETAT/veille.lock"
 if ! flock -n 9; then
     log "veille précédente encore en cours : on passe ce tour"
     exit 0

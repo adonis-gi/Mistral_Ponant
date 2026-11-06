@@ -6,7 +6,7 @@ RACINE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # Fichiers Ansible
 PLAYBOOK="${PLAYBOOK:-$RACINE/deploiement/deploy.yml}"
-INVENTAIRE="${INVENTAIRE:-$RACINE/deploiement/inventaire.ini}"
+INVENTAIRE="${INVENTAIRE:-$RACINE/deploiement/inventory.ini}"
 
 # Fonction pour afficher une erreur et arrêter le script
 erreur() {
