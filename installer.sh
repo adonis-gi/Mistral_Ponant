@@ -15,20 +15,27 @@ erreur() {
 }
 
 
-JETON=/etc/mistral/vigie.env
-
-
 JETON="/etc/mistral/vigie.env"
+DESTINATION="/guilde/deploiement/files/.env"
 
+# Vérifier que le fichier existe
 if [[ ! -f "$JETON" ]]; then
     echo "Erreur : le fichier du jeton est introuvable." >&2
     exit 1
 fi
 
+# Vérifier que le fichier est lisible
 if [[ ! -r "$JETON" ]]; then
     echo "Erreur : le jeton n'est pas lisible." >&2
     exit 1
 fi
+
+mkdir -p "/guilde/deploiement/files"
+# Copier le jeton avec des permissions restrictives
+install -m 600 -- "$JETON" "$DESTINATION"
+
+echo "Le fichier du jeton a été copié avec succès."
+
 
 
 echo "=== Installation du kit Mistral ==="
